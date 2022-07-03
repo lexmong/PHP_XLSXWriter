@@ -25,6 +25,9 @@ class XLSXWriter
 	protected $temp_files = array();
 	protected $cell_styles = array();
 	protected $number_formats = array();
+	protected $images = array();
+
+
 
 	public function __construct()
 	{
@@ -118,6 +121,21 @@ class XLSXWriter
 
 		$zip->addEmptyDir("xl/_rels/");
 		$zip->addFromString("xl/_rels/workbook.xml.rels", self::buildWorkbookRelsXML() );
+
+        $i=1;
+        foreach ($this->sheets as $sheet) {
+            if (count($sheet->images) > 0) {
+                $zip->addFromString('xl/worksheets/_rels/sheet' . $i . '.xml.rels', self::buildSheetRelationshipsXML($i));
+                $zip->addFromString('xl/drawings/drawing' . $i . '.xml', self::buildDrawingsXML($sheet));
+                $zip->addFromString('xl/drawings/_rels/drawing' . $i . '.xml.rels', self::buildDrawingRelationshipsXML($sheet));
+            }
+            $i++;
+        }
+
+        foreach($this->images as $id => $path){
+            $zip->addFile($path, 'xl/media/'.$id.'.'.pathinfo($path,PATHINFO_EXTENSION ));
+        }
+
 		$zip->close();
 	}
 
@@ -143,6 +161,7 @@ class XLSXWriter
 			'freeze_rows' => $freeze_rows,
 			'freeze_columns' => $freeze_columns,
 			'finalized' => false,
+            'images' => array(),
 		);
 		$rightToLeftValue = $this->isRightToLeft ? 'true' : 'false';
 		$sheet = &$this->sheets[$sheet_name];
@@ -288,6 +307,25 @@ class XLSXWriter
 		$this->current_sheet = $sheet_name;
 	}
 
+    public function writeImg($sheet_name,$path,$row,$col,$options=null){
+        if (empty($sheet_name)) return;
+
+        //TODO initialize sheet
+
+        $sheet = &$this->sheets[$sheet_name];
+        $image_idx=self::add_to_list_get_index($this->images,$path);
+        $size = getimagesize($path);
+
+        $sheet->images[] = [
+            'col'       => $col,
+            'row'       => $row,
+            'width'     => isset($options['width']) ? $options['width']: $size[0],
+            'height'    => isset($options['height']) ? $options['height']: $size[1],
+            'margins'   => isset($options['margins']) ? $options['margins']:0,
+            'id'        => $image_idx
+        ];
+    }
+
 	public function countSheetRows($sheet_name = '')
 	{
 		$sheet_name = $sheet_name ? $sheet_name : $this->current_sheet;
@@ -324,6 +362,9 @@ class XLSXWriter
 		$sheet->file_writer->write(        '<oddHeader>&amp;C&amp;&quot;Times New Roman,Regular&quot;&amp;12&amp;A</oddHeader>');
 		$sheet->file_writer->write(        '<oddFooter>&amp;C&amp;&quot;Times New Roman,Regular&quot;&amp;12Page &amp;P</oddFooter>');
 		$sheet->file_writer->write(    '</headerFooter>');
+		if(count($sheet->images)>0){
+            $sheet->file_writer->write('<drawing r:id="rId1"/>');
+        }
 		$sheet->file_writer->write('</worksheet>');
 
 		$max_cell_tag = '<dimension ref="A1:' . $max_cell . '"/>';
@@ -711,10 +752,117 @@ class XLSXWriter
 		$content_types_xml.='<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>';
 		$content_types_xml.='<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>';
 		$content_types_xml.='<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>';
-		$content_types_xml.="\n";
+
+        $ext = array_unique(array_map(function ($i){return pathinfo($i, PATHINFO_EXTENSION);},$this->images));
+        foreach($ext as $e){
+            $content_types_xml.='<Default ContentType="image/'.$e.'" Extension="'.$e.'"/>';
+        }
+
+        //TODO only if img not empty
+        $content_types_xml.='<Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/>';
+        $content_types_xml.='<Default ContentType="application/xml" Extension="xml"/>';
+
+
+        $i=1;
+        foreach ($this->sheets as $sheet) {
+            if (count($sheet->images) > 0) {
+                $content_types_xml.='<Override ContentType="application/vnd.openxmlformats-officedocument.drawing+xml" PartName="/xl/drawings/drawing'.$i++.'.xml"/>';
+            }
+        }
+
+
+        $content_types_xml.="\n";
 		$content_types_xml.='</Types>';
 		return $content_types_xml;
 	}
+
+    protected function buildSheetRelationshipsXML($i){
+        $sheet1_xml_rels ='';
+        $sheet1_xml_rels.='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+        $sheet1_xml_rels.='<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
+        $sheet1_xml_rels.='<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing'.$i.'.xml"/>';
+        $sheet1_xml_rels.='</Relationships>';
+
+        return $sheet1_xml_rels;
+    }
+
+    protected function buildDrawingRelationshipsXML($sheet){
+        $id=1;
+        $drawing_xml_rels ='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+        $drawing_xml_rels.='<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
+
+        foreach($sheet->images as $image){
+            $drawing_xml_rels .= '<Relationship Id="rId' . $id++ . '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/'.$image['id'] .'.'.pathinfo($this->images[$image['id']],PATHINFO_EXTENSION ). '"/>';
+        }
+
+        $drawing_xml_rels .= '</Relationships>';
+
+        return $drawing_xml_rels;
+    }
+
+    protected function buildDrawingsXML($sheet){
+        $drawing_xml='';
+        $drawing_xml.= '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+        $drawing_xml.= '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">';
+        $id = 1;
+
+        foreach($sheet->images as $image){
+            $from_col_off = self::pixelToEMU($image['margins']);
+            $from_row_off = self::pixelToEMU($image['margins']);
+            $to_col_off = self::pixelToEMU($image['width']);
+            $to_row_off = self::pixelToEMU($image['height']);
+
+            $drawing_xml .= '<xdr:twoCellAnchor editAs="twoCell">';
+            $drawing_xml .= '<xdr:from>';
+            $drawing_xml .= '<xdr:col>' . $image['col'] . '</xdr:col>';
+            $drawing_xml .= '<xdr:colOff>' . $from_col_off . '</xdr:colOff>';
+            $drawing_xml .= '<xdr:row>' . $image['row'] . '</xdr:row>';
+            $drawing_xml .= '<xdr:rowOff>' . $from_row_off . '</xdr:rowOff>';
+            $drawing_xml .= '</xdr:from>';
+            $drawing_xml .= '<xdr:to>';
+            $drawing_xml .= '<xdr:col>' . $image['col'] . '</xdr:col>';
+            $drawing_xml .= '<xdr:colOff>' . $to_col_off . '</xdr:colOff>';
+            $drawing_xml .= '<xdr:row>' . $image['row'] . '</xdr:row>';
+            $drawing_xml .= '<xdr:rowOff>' . $to_row_off . '</xdr:rowOff>';
+            $drawing_xml .= '</xdr:to>';
+            $drawing_xml .= '<xdr:pic>';
+            $drawing_xml .= '<xdr:nvPicPr>';
+            $drawing_xml .= '<xdr:cNvPr id="' . $id . '" name=""/>';
+            $drawing_xml .= '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/>';
+            $drawing_xml .= '</xdr:cNvPicPr>';
+            $drawing_xml .= '</xdr:nvPicPr>';
+            $drawing_xml .= '<xdr:blipFill>';
+            $drawing_xml .= '<a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rId' . $id++ . '" cstate="print">';
+            $drawing_xml .= '<a:extLst>';
+            $drawing_xml .= '<a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">';
+            $drawing_xml .= '<a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>';
+            $drawing_xml .= '</a:ext>';
+            $drawing_xml .= '</a:extLst>';
+            $drawing_xml .= '</a:blip>';
+            $drawing_xml .= '<a:stretch>';
+            $drawing_xml .= '<a:fillRect/>';
+            $drawing_xml .= '</a:stretch>';
+            $drawing_xml .= '</xdr:blipFill>';
+            $drawing_xml .= '<xdr:spPr>';
+            $drawing_xml .= '<a:xfrm>';
+            $drawing_xml .= '<a:off x="0" y="0"/>';
+            $drawing_xml .= '<a:ext cx="0" cy="0"/>';
+            $drawing_xml .= '</a:xfrm>';
+            $drawing_xml .= '<a:prstGeom prst="rect">';
+            $drawing_xml .= '<a:avLst/>';
+            $drawing_xml .= '</a:prstGeom>';
+            $drawing_xml .= '</xdr:spPr>';
+            $drawing_xml .= '</xdr:pic>';
+            $drawing_xml .= '<xdr:clientData/>';
+            $drawing_xml .= '</xdr:twoCellAnchor>';
+        }
+        $drawing_xml .= '</xdr:wsDr>';
+        return $drawing_xml;
+    }
+
+    protected function pixelToEMU($pixel){
+        return $pixel * 914400 / 96;
+    }
 
 	//------------------------------------------------------------------
 	/*
