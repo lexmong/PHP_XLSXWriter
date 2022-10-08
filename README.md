@@ -10,6 +10,7 @@ It is designed to output an Excel compatible spreadsheet in (Office 2007+) xlsx 
 * supports currency/date/numeric cell formatting, simple formulas
 * supports basic cell styling
 * supports writing huge 100K+ row spreadsheets
+* supports writing images
 
 [Never run out of memory with PHPExcel again](https://github.com/mk-j/PHP_XLSXWriter).
 
