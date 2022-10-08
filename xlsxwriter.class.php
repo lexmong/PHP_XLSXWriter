@@ -309,8 +309,7 @@ class XLSXWriter
 
     public function writeImg($sheet_name,$path,$row,$col,$options=null){
         if (empty($sheet_name)) return;
-
-        //TODO initialize sheet
+		$this->initializeSheet($sheet_name);
 
         $sheet = &$this->sheets[$sheet_name];
         $image_idx=self::add_to_list_get_index($this->images,$path);
@@ -758,10 +757,8 @@ class XLSXWriter
             $content_types_xml.='<Default ContentType="image/'.$e.'" Extension="'.$e.'"/>';
         }
 
-        //TODO only if img not empty
         $content_types_xml.='<Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/>';
         $content_types_xml.='<Default ContentType="application/xml" Extension="xml"/>';
-
 
         $i=1;
         foreach ($this->sheets as $sheet) {
